@@ -1,0 +1,183 @@
+name: Release
+
+# Pushing a v* tag builds every platform, publishes a GitHub Release with
+# signed updater artifacts and latest.json, and installed apps pick it up.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Tag matches version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node scripts/version.mjs check "${{ github.ref_name }}"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple silicon
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - name: macOS Intel
+            platform: macos-latest
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - name: Windows
+            platform: windows-latest
+            target: ""
+            args: ""
+          - name: Linux
+            platform: ubuntu-22.04
+            target: ""
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - run: pnpm install --frozen-lockfile
+
+      # macOS code signing + notarization, only when the secrets exist.
+      # Without them the build is unsigned and users must bypass Gatekeeper.
+      - name: macOS signing setup
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              {
+                echo "$v<<__EOF__"
+                printenv "$v"
+                echo "__EOF__"
+              } >> "$GITHUB_ENV"
+            done
+            echo "macOS signing enabled"
+          else
+            echo "::warning::APPLE_CERTIFICATE not set; building an unsigned macOS app"
+          fi
+
+      # Windows code signing with Azure Artifact Signing, only when configured.
+      # Secrets: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID.
+      # Variables: AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE.
+      - name: Windows signing setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+        run: |
+          if (-not $env:AZURE_CLIENT_ID) {
+            Write-Output "::warning::Azure signing not configured; building an unsigned Windows installer"
+            exit 0
+          }
+          cargo install trusted-signing-cli --locked
+          $conf = @{ bundle = @{ windows = @{ signCommand = "trusted-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:PROFILE -d `"Nemesis Package Manager`" %1" } } }
+          $conf | ConvertTo-Json -Depth 5 | Set-Content src-tauri/tauri.windows-signing.conf.json
+          "EXTRA_TAURI_ARGS=--config src-tauri/tauri.windows-signing.conf.json" | Out-File -Append $env:GITHUB_ENV
+          "AZURE_CLIENT_ID=$env:AZURE_CLIENT_ID" | Out-File -Append $env:GITHUB_ENV
+          "AZURE_CLIENT_SECRET=$env:AZURE_CLIENT_SECRET" | Out-File -Append $env:GITHUB_ENV
+          "AZURE_TENANT_ID=$env:AZURE_TENANT_ID" | Out-File -Append $env:GITHUB_ENV
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (separate from OS code signing). Losing this key
+          # strands every installed copy, so keep offline backups.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Nemesis Package Manager ${{ github.ref_name }}
+          releaseBody: See the commits since the previous release.
+          # Draft until every platform has uploaded, then published at once,
+          # so the (immutable) release never exists half-built.
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          uploadUpdaterJson: true
+          # createUpdaterArtifacts lives in this overlay so local builds don't
+          # need the signing key.
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json ${{ env.EXTRA_TAURI_ARGS }}
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Un-draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false
+
+  beta-channel:
+    # The beta channel reads latest.json for the newest tag of any kind from
+    # this repo's GitHub Pages (stable reads releases/latest, which skips
+    # prereleases).
+    name: Update beta channel
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - name: Fetch latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p site/updater/beta
+          gh release download "${{ github.ref_name }}" --repo "${{ github.repository }}" --pattern latest.json --dir site/updater/beta
+          touch site/.nojekyll
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - uses: actions/deploy-pages@v5

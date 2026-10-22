@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/
+src-tauri/tauri.windows-signing.conf.json
+*.log
+.DS_Store
+# Never commit signing keys.
+*.key
