@@ -268,22 +268,40 @@ function InstalledSummary() {
   const install = useInstaller();
   const setView = useApp((s) => s.setView);
   const busy = useIsBusy();
+  const openDetail = useApp((s) => s.openDetail);
   if (!state || state.status !== "ready") return null;
   const updates = state.installed.filter((i) => i.updateAvailable);
+  const single = state.installed.length === 1 ? state.installed[0] : undefined;
   return (
     <section aria-label="Installed on this drive" className="flex flex-col gap-2">
       <Separator />
       <div className="flex items-center justify-between">
         <h3 className="text-[12px] font-semibold tracking-wide text-muted-foreground uppercase">On this drive</h3>
-        <Button variant="link" size="sm" onClick={() => setView("installed")}>
-          View all
-        </Button>
+        {state.installed.length > 1 && (
+          <Button variant="link" size="sm" onClick={() => setView("installed")}>
+            View all
+          </Button>
+        )}
       </div>
-      <p className="text-[13px]">
-        {state.installed.length === 0
-          ? "Nothing installed yet."
-          : `${state.installed.length} package${state.installed.length === 1 ? "" : "s"} installed.`}
-      </p>
+      {state.installed.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground">Empty. Pick a package to put on it.</p>
+      ) : single ? (
+        <button
+          type="button"
+          onClick={() => single.inIndex && openDetail(single.record.id)}
+          className="flex items-center justify-between gap-2 rounded-lg bg-card/70 p-2.5 text-left text-[13px] outline-none hover:bg-card focus-visible:ring-[3px] focus-visible:ring-ring"
+        >
+          <span className="min-w-0">
+            <span className="block truncate font-medium">{single.name}</span>
+            <span className="block truncate font-mono text-[11px] text-muted-foreground">
+              {single.record.paths.slice(0, 2).join(" · ")}
+            </span>
+          </span>
+          <span className="shrink-0 text-[12px] text-muted-foreground tabular-nums">{single.record.version}</span>
+        </button>
+      ) : (
+        <p className="text-[13px]">{state.installed.length} packages installed.</p>
+      )}
       {updates.length > 0 && (
         <div className="flex items-center justify-between gap-2 rounded-lg bg-primary/8 p-2.5">
           <span className="flex items-center gap-2 text-[13px] text-primary">
@@ -291,7 +309,7 @@ function InstalledSummary() {
             {updates.length} update{updates.length === 1 ? "" : "s"} available
           </span>
           <Button size="sm" disabled={busy} onClick={() => void install(updates.map((u) => u.record.id))}>
-            Update all
+            {updates.length === 1 ? "Update" : "Update all"}
           </Button>
         </div>
       )}

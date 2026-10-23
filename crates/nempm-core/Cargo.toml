@@ -1,5 +1,5 @@
 [package]
-name = "pkgmgr-core"
+name = "nempm-core"
 description = "Download, verify and install packages onto removable drives. No UI dependencies."
 version.workspace = true
 edition.workspace = true

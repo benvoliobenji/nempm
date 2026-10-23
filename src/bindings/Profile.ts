@@ -10,4 +10,9 @@ export type Profile = { id: string, name?: string, description?: string, version
 /**
  * Normalised names: `fat32`, `exfat`, `ntfs`, `apfs`, `hfsplus`, `ext4`.
  */
-filesystems: Array<string>, maxFileBytes: Record<string, number>, volumeLabel?: VolumeLabelRule, requiredDirs: Array<string>, slots: { [key in string]: Slot }, naming?: NamingRule, reserved: Array<string>, };
+filesystems: Array<string>, maxFileBytes: Record<string, number>, 
+/**
+ * How many packages a drive holds at once (Nemesis: 1). Installing
+ * another replaces what's there, once the user confirms.
+ */
+maxPackages?: number, volumeLabel?: VolumeLabelRule, requiredDirs: Array<string>, slots: { [key in string]: Slot }, naming?: NamingRule, reserved: Array<string>, };

@@ -49,10 +49,16 @@ const MIN_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Reports one package's progress, throttling byte updates to about ten a
 /// second so a fast copy doesn't flood the UI.
+///
+/// A package can be several files (the package and its data file). With a
+/// scope set, each file's `(done, total)` is reported as part of one running
+/// total, so the progress bar fills once per stage rather than once per file.
 pub struct Reporter {
     sink: ProgressFn,
     id: String,
     last: Mutex<Option<(Stage, Instant)>>,
+    /// (offset, total); a total of 0 reports values unchanged.
+    scope: Mutex<(u64, u64)>,
 }
 
 impl Reporter {
@@ -61,7 +67,24 @@ impl Reporter {
             sink,
             id: id.into(),
             last: Mutex::new(None),
+            scope: Mutex::new((0, 0)),
         })
+    }
+
+    /// Reports the next file's bytes starting at `offset` of `total`.
+    pub fn set_scope(&self, offset: u64, total: u64) {
+        *self.scope.lock().unwrap() = (offset, total);
+    }
+
+    pub fn clear_scope(&self) {
+        self.set_scope(0, 0);
+    }
+
+    fn scoped(&self, done: u64, total: u64) -> (u64, u64) {
+        match *self.scope.lock().unwrap() {
+            (_, 0) => (done, total),
+            (offset, scope_total) => ((offset + done).min(scope_total), scope_total),
+        }
     }
 
     fn send(&self, stage: Stage, done: u64, total: u64, message: Option<String>) {
@@ -77,11 +100,13 @@ impl Reporter {
 
     /// Always emitted: a stage starts.
     pub fn stage(&self, stage: Stage, done: u64, total: u64) {
+        let (done, total) = self.scoped(done, total);
         self.send(stage, done, total, None);
     }
 
     /// Emitted at most every 100 ms, plus on stage change and completion.
     pub fn bytes(&self, stage: Stage, done: u64, total: u64) {
+        let (done, total) = self.scoped(done, total);
         let due = match *self.last.lock().unwrap() {
             Some((last_stage, at)) => last_stage != stage || at.elapsed() >= MIN_INTERVAL || done >= total,
             None => true,
@@ -149,6 +174,26 @@ mod tests {
         assert!(events.len() <= 4, "got {} events", events.len());
         assert_eq!(events.last().unwrap().stage, Stage::Verify);
         assert!(events.iter().any(|e| e.bytes_done == 100 && e.stage == Stage::Download));
+    }
+
+    #[test]
+    fn scopes_add_up_across_files() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let reporter = Reporter::new(Arc::new(move |p| sink.lock().unwrap().push(p)), "a");
+        reporter.set_scope(0, 110);
+        reporter.stage(Stage::Copy, 10, 10);
+        reporter.set_scope(10, 110);
+        reporter.stage(Stage::Copy, 50, 100);
+        reporter.clear_scope();
+        reporter.stage(Stage::Readback, 3, 7);
+        let got: Vec<_> = events
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|e| (e.bytes_done, e.bytes_total))
+            .collect();
+        assert_eq!(got, [(10, 110), (60, 110), (3, 7)]);
     }
 
     #[test]

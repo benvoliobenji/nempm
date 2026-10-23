@@ -8,7 +8,7 @@ import { EmptyState, Skeleton } from "@/components/ui/misc";
 import { useDriveState, useRefreshDrive } from "@/hooks/queries";
 import { useInstaller, useIsBusy } from "@/hooks/useInstaller";
 import { api } from "@/lib/api";
-import { errorMessage, isKind } from "@/lib/errors";
+import { errorMessage } from "@/lib/errors";
 import { formatBytes } from "@/lib/utils";
 import { useApp } from "@/stores/app";
 import { ScreenHeader } from "./screen-header";
@@ -95,22 +95,14 @@ function InstalledRow({ item }: { item: InstalledView }) {
 
   const remove = async () => {
     if (!drivePath) return;
-    if (!window.confirm(`Uninstall ${item.name}? Its ${rec.paths.length} file(s) will be deleted from the drive.`)) return;
+    const files = rec.data ? `${rec.paths.length} file(s), including ${rec.data},` : `${rec.paths.length} file(s)`;
+    if (!window.confirm(`Uninstall ${item.name}? Its ${files} will be deleted from the drive.`)) return;
     setRemoving(true);
     try {
-      await api.uninstall(drivePath, rec.id, false);
+      await api.uninstall(drivePath, rec.id);
       toast.success(`Removed ${item.name}.`);
     } catch (err) {
-      if (isKind(err, "dependency") && window.confirm(`${errorMessage(err)}\n\nRemove it anyway?`)) {
-        try {
-          await api.uninstall(drivePath, rec.id, true);
-          toast.success(`Removed ${item.name}.`);
-        } catch (e) {
-          toast.error(errorMessage(e));
-        }
-      } else if (!isKind(err, "dependency")) {
-        toast.error(errorMessage(err));
-      }
+      toast.error(errorMessage(err));
     } finally {
       setRemoving(false);
       refresh();
@@ -128,7 +120,12 @@ function InstalledRow({ item }: { item: InstalledView }) {
         >
           {item.name}
         </button>
-        <div className="font-mono text-[11px] text-muted-foreground">{rec.paths.length === 1 ? rec.paths[0] : `${rec.dirs?.[0] ?? ""}/ · ${rec.paths.length} files`}</div>
+        <div className="font-mono text-[11px] text-muted-foreground">
+          {rec.extracted
+            ? `${rec.paths.length - (rec.data ? 1 : 0)} unpacked file(s)`
+            : rec.paths.find((p) => p !== rec.data)}
+          {rec.data && ` + ${rec.data}`}
+        </div>
       </td>
       <td className="px-4 py-2.5 tabular-nums">
         {rec.version}

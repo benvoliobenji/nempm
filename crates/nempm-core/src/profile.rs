@@ -46,6 +46,8 @@ pub struct Placement {
     pub file: String,
     /// Drive-relative folder it is unpacked into, if the slot allows that.
     pub extract_dir: Option<String>,
+    /// Drive-relative path of the package's data file, if the slot takes one.
+    pub data_file: Option<String>,
 }
 
 impl Placement {
@@ -113,21 +115,32 @@ pub fn placement_for(
                 .extract_dir
                 .clone()
                 .unwrap_or_else(|| paths::rel_join(&slot.path, "{id}"));
+            // Empty means the drive root: the zip's own folders land there.
             let dir = paths::render(&template, &v)?;
             check_path(profile, &dir)?;
-            if dir.is_empty() {
-                return Err(Error::Profile(format!(
-                    "Slot \"{slot_name}\" would unpack into the drive root"
-                )));
-            }
             Some(dir)
         }
+    };
+
+    let data_file = match &slot.data_file {
+        Some(template) => {
+            let rel = paths::render(template, &v)?;
+            check_path(profile, &rel)?;
+            if rel.is_empty() || rel == file {
+                return Err(Error::Profile(format!(
+                    "Slot \"{slot_name}\" has an invalid data file path \"{rel}\""
+                )));
+            }
+            Some(rel)
+        }
+        None => None,
     };
 
     Ok(Placement {
         slot: slot_name.to_string(),
         file,
         extract_dir,
+        data_file,
     })
 }
 
@@ -161,6 +174,25 @@ pub fn slot_for<'p>(profile: &'p Profile, pkg: &Package) -> Result<&'p Slot> {
             pkg.format.as_str()
         )));
     }
+    match (&slot.data_file, &pkg.data) {
+        // A zip without a data asset carries the file itself and is unpacked.
+        (Some(file), None) if pkg.format != PackageFormat::Zip || slot.extract == ExtractPolicy::Never => {
+            return Err(Error::Profile(format!(
+                "{} is missing the {file} that {} needs next to it. Ask its publisher to add it to the release.",
+                pkg.name,
+                profile.display_name()
+            )));
+        }
+        (None, Some(_)) => {
+            return Err(Error::Profile(format!(
+                "{} comes with a data file, but slot \"{}\" in {} doesn't take one",
+                pkg.name,
+                pkg.slot,
+                profile.display_name()
+            )));
+        }
+        _ => {}
+    }
     if let Some(rule) = &profile.naming {
         let re =
             Regex::new(&rule.pattern).map_err(|e| Error::Profile(format!("Profile naming pattern is invalid: {e}")))?;
@@ -190,8 +222,14 @@ pub fn effective_extract(slot: &Slot, pkg: &Package, requested: Option<bool>) ->
     match slot.extract {
         ExtractPolicy::Never => false,
         ExtractPolicy::Always => true,
-        ExtractPolicy::Optional => requested.unwrap_or(pkg.extract),
+        ExtractPolicy::Optional => data_in_zip(slot, pkg) || requested.unwrap_or(pkg.extract),
     }
+}
+
+/// Whether the package's data file is inside its zip rather than an asset of
+/// its own. Such a zip is always unpacked, which puts the file in place.
+pub fn data_in_zip(slot: &Slot, pkg: &Package) -> bool {
+    slot.data_file.is_some() && pkg.data.is_none() && pkg.format == PackageFormat::Zip
 }
 
 /// Defensive checks on a profile from the index. The registry CI enforces the
@@ -207,6 +245,12 @@ pub fn validate_profile(profile: &Profile) -> Result<()> {
     }
     if profile.slots.is_empty() {
         return Err(Error::InvalidData(format!("Profile {} has no slots", profile.id)));
+    }
+    if profile.max_packages == Some(0) {
+        return Err(Error::InvalidData(format!(
+            "Profile {}: maxPackages must be at least 1",
+            profile.id
+        )));
     }
     for dir in &profile.required_dirs {
         if dir.is_empty() || dir.contains('{') {
@@ -238,17 +282,32 @@ pub fn validate_profile(profile: &Profile) -> Result<()> {
             let file = paths::render(file, &sample)?;
             paths::validate_component(&file).map_err(Error::InvalidData)?;
         }
+        if let Some(data) = &slot.data_file {
+            let data = paths::render(data, &sample)?;
+            if data.is_empty() {
+                return Err(Error::InvalidData(format!(
+                    "Profile {}: slot \"{name}\" has an empty data file path",
+                    profile.id
+                )));
+            }
+            check_path(profile, &data)?;
+        }
         if slot.extract != ExtractPolicy::Never {
             let template = slot
                 .extract_dir
                 .clone()
                 .unwrap_or_else(|| paths::rel_join(&slot.path, "{id}"));
-            if !template.contains("{id}") {
+            // Packages would unpack over each other, unless the drive (or
+            // slot) only ever holds one.
+            let holds_one = profile.max_packages == Some(1) || slot.max == Some(1);
+            if !template.contains("{id}") && !holds_one {
                 return Err(Error::InvalidData(format!(
-                    "Profile {}: slot \"{name}\" must unpack into a folder containing {{id}}",
+                    "Profile {}: slot \"{name}\" must unpack into a folder containing {{id}}, or hold one package",
                     profile.id
                 )));
             }
+            let dir = paths::render(&template, &sample)?;
+            check_path(profile, &dir)?;
         }
     }
     Ok(())
@@ -280,10 +339,25 @@ pub fn validate_package(pkg: &Package) -> Result<()> {
             pkg.id
         )));
     }
-    for dep in &pkg.deps {
-        paths::validate_id(dep)?;
+    for req in &pkg.requires {
+        paths::validate_id(req)?;
     }
     crate::http::check_url(&pkg.url)?;
+    if let Some(data) = &pkg.data {
+        if pkg.core {
+            return Err(Error::InvalidData(format!(
+                "{}: the core package has no data file",
+                pkg.id
+            )));
+        }
+        if !SHA256_RE.is_match(&data.sha256) || data.size == 0 {
+            return Err(Error::InvalidData(format!(
+                "{}: the data file needs a 64-character lowercase sha256 and a positive size",
+                pkg.id
+            )));
+        }
+        crate::http::check_url(&data.url)?;
+    }
     Ok(())
 }
 
@@ -311,9 +385,14 @@ pub(crate) mod tests {
             sha256: "a".repeat(64),
             size: 10,
             extract: false,
+            data: (slot == "packages").then(|| crate::model::DataAsset {
+                url: format!("https://github.com/o/{id}/releases/download/v1.0.0/NEMESIS.data"),
+                sha256: "b".repeat(64),
+                size: 5,
+            }),
             slot: slot.into(),
             profiles: vec!["nemesis".into()],
-            deps: vec![],
+            requires: vec![],
             homepage: None,
         }
     }
@@ -323,15 +402,41 @@ pub(crate) mod tests {
         let profile = nemesis();
         validate_profile(&profile).unwrap();
 
-        let core = placement(&profile, &pkg("nemesis-core", PackageFormat::Tar, "core")).unwrap();
-        assert_eq!(core.file, "NEMESIS.data");
-        assert_eq!(core.extract_dir, None);
+        assert_eq!(profile.max_packages, Some(1));
 
-        let tool = placement(&profile, &pkg("tool", PackageFormat::Zip, "packages")).unwrap();
-        assert_eq!(tool.file, "packages/tool.zip");
-        assert_eq!(tool.extract_dir.as_deref(), Some("packages/tool"));
-        assert_eq!(tool.target(false), "packages/tool.zip");
-        assert_eq!(tool.target(true), "packages/tool");
+        // Core: the .tar at the drive root under its release file name.
+        let core = placement(&profile, &pkg("nemesis-core", PackageFormat::Tar, "core")).unwrap();
+        assert_eq!(core.file, "nemesis-core.tar");
+        assert_eq!(core.extract_dir, None);
+        assert_eq!(core.data_file, None);
+
+        // A tool: NEMESIS.data at the root plus packages/<id>.zip.
+        let tool = placement(&profile, &pkg("my.tool", PackageFormat::Zip, "packages")).unwrap();
+        assert_eq!(tool.file, "packages/my.tool.zip");
+        assert_eq!(tool.data_file.as_deref(), Some("NEMESIS.data"));
+        // Unpacked, the zip's contents go straight into the drive root.
+        assert_eq!(tool.extract_dir.as_deref(), Some(""));
+        assert_eq!(tool.target(false), "packages/my.tool.zip");
+        assert_eq!(tool.target(true), "");
+    }
+
+    #[test]
+    fn data_file_must_match_the_slot() {
+        let profile = nemesis();
+        // A zip without a data asset is fine: the file comes inside it...
+        let mut tool = pkg("tool", PackageFormat::Zip, "packages");
+        tool.data = None;
+        placement(&profile, &tool).unwrap();
+        // ...unless the slot can't unpack it.
+        let mut never = profile.clone();
+        let slot = never.slots.get_mut("packages").unwrap();
+        slot.extract = ExtractPolicy::Never;
+        slot.extract_dir = None;
+        assert!(matches!(placement(&never, &tool), Err(Error::Profile(m)) if m.contains("NEMESIS.data")));
+        let mut core = pkg("nemesis-core", PackageFormat::Tar, "core");
+        core.data = pkg("tool", PackageFormat::Zip, "packages").data;
+        assert!(placement(&profile, &core).is_err());
+        assert!(validate_package(&core).is_err());
     }
 
     #[test]
@@ -369,17 +474,43 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_zip_carrying_its_data_file_is_always_unpacked() {
+        let profile = nemesis();
+        let slot = &profile.slots["packages"];
+        let mut tool = pkg("tool", PackageFormat::Zip, "packages");
+        assert!(!data_in_zip(slot, &tool));
+        tool.data = None;
+        assert!(data_in_zip(slot, &tool));
+        assert!(effective_extract(slot, &tool, None));
+        assert!(
+            effective_extract(slot, &tool, Some(false)),
+            "the user can't turn it off"
+        );
+        assert!(!data_in_zip(
+            &profile.slots["core"],
+            &pkg("nemesis-core", PackageFormat::Tar, "core")
+        ));
+    }
+
+    #[test]
     fn hostile_profiles_are_rejected() {
         let mut profile = nemesis();
         profile.slots.get_mut("packages").unwrap().path = "../outside".into();
         assert!(validate_profile(&profile).is_err());
 
         let mut profile = nemesis();
-        profile.slots.get_mut("packages").unwrap().path = ".pkgmgr".into();
+        profile.slots.get_mut("packages").unwrap().path = ".nempm".into();
+        assert!(validate_profile(&profile).is_err());
+
+        // A shared unpack folder is only fine when the drive holds one package.
+        let mut profile = nemesis();
+        profile.slots.get_mut("packages").unwrap().extract_dir = Some("packages/all".into());
+        validate_profile(&profile).unwrap();
+        profile.max_packages = None;
         assert!(validate_profile(&profile).is_err());
 
         let mut profile = nemesis();
-        profile.slots.get_mut("packages").unwrap().extract_dir = Some("packages/all".into());
+        profile.slots.get_mut("packages").unwrap().extract_dir = Some(".nempm/{id}".into());
         assert!(validate_profile(&profile).is_err());
     }
 
@@ -414,6 +545,9 @@ pub(crate) mod tests {
         assert!(validate_package(&bad).is_err());
         let mut bad = good.clone();
         bad.core = true;
+        assert!(validate_package(&bad).is_err());
+        let mut bad = good.clone();
+        bad.data.as_mut().unwrap().sha256 = "nope".into();
         assert!(validate_package(&bad).is_err());
     }
 }

@@ -1,4 +1,4 @@
-import { CircleArrowUp, Download, ExternalLink, RotateCcw, Trash2 } from "lucide-react";
+import { CircleArrowUp, Download, ExternalLink, Info, RotateCcw, Trash2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -8,8 +8,8 @@ import { Switch } from "@/components/ui/switch";
 import { useDriveState, useIndex, useRefreshDrive } from "@/hooks/queries";
 import { useInstaller, useIsBusy } from "@/hooks/useInstaller";
 import { api } from "@/lib/api";
-import { errorMessage, isKind } from "@/lib/errors";
-import { formatBytes } from "@/lib/utils";
+import { errorMessage } from "@/lib/errors";
+import { formatBytes, unpackLabel } from "@/lib/utils";
 import { useApp } from "@/stores/app";
 import { PackageGlyph } from "./package-card";
 
@@ -43,34 +43,34 @@ export function PackageDetailDialog() {
   const profile = result?.index.profiles.find((p) => p.id === profileId);
   const slot = pkg && profile ? profile.slots[pkg.slot] : undefined;
   const installed = drive?.installed.find((i) => i.record.id === pkg?.id);
-  const deps = (pkg?.deps ?? []).map((d) => result?.index.packages.find((p) => p.id === d)?.name ?? d);
+  const requires = (pkg?.requires ?? []).map((d) => result?.index.packages.find((p) => p.id === d)?.name ?? d);
+  const occupant = drive?.installed.find((i) => i.record.id !== pkg?.id);
+  // A zip with no data asset carries its own NEMESIS.data, so it is always unpacked.
+  const dataInZip = pkg?.format === "zip" && !!slot?.dataFile && !pkg.data;
   const canExtract = pkg?.format === "zip" && slot?.extract === "optional";
-  const extractOn = pkg ? (slot?.extract === "always" ? true : (extract[pkg.id] ?? pkg.extract)) && pkg.format === "zip" : false;
+  const extractOn = pkg
+    ? (slot?.extract === "always" || dataInZip ? true : (extract[pkg.id] ?? pkg.extract)) && pkg.format === "zip"
+    : false;
   const ready = !!drivePath && drive?.status === "ready";
 
   const target =
     pkg && slot
       ? extractOn
-        ? `${(slot.extractDir ?? (slot.path ? `${slot.path}/{id}` : "{id}")).replaceAll("{id}", pkg.id)}/`
+        ? unpackLabel((slot.extractDir ?? (slot.path ? `${slot.path}/{id}` : "{id}")).replaceAll("{id}", pkg.id))
         : targetPath(slot.path, slot.file, pkg.id, pkg.format, pkg.version, pkg.url)
       : null;
 
-  const remove = async (force = false) => {
+  const writes = [slot?.dataFile ?? null, target].filter(Boolean) as string[];
+
+  const remove = async () => {
     if (!pkg || !drivePath) return;
     setRemoving(true);
     try {
-      await api.uninstall(drivePath, pkg.id, force);
+      await api.uninstall(drivePath, pkg.id);
       toast.success(`Removed ${pkg.name}.`);
       refresh();
     } catch (err) {
-      if (!force && isKind(err, "dependency")) {
-        if (window.confirm(`${errorMessage(err)}\n\nRemove it anyway? The packages that need it may stop working.`)) {
-          setRemoving(false);
-          return remove(true);
-        }
-      } else {
-        toast.error(errorMessage(err));
-      }
+      toast.error(errorMessage(err));
     } finally {
       setRemoving(false);
     }
@@ -99,25 +99,48 @@ export function PackageDetailDialog() {
                 </span>
               )}
             </Row>
-            <Row label="Size">{formatBytes(pkg.size)}</Row>
+            <Row label="Size">{formatBytes(pkg.size + (pkg.data?.size ?? 0))}</Row>
             <Row label="Format">.{pkg.format}{pkg.format === "tar" && " · copied as-is, never unpacked"}</Row>
-            {target && (
-              <Row label="Goes to">
-                <code className="rounded bg-foreground/[0.06] px-1.5 py-0.5 text-[12px]">{target}</code>
+            {writes.length > 0 && (
+              <Row label="Writes">
+                <span className="flex flex-wrap gap-1">
+                  {writes.map((w) => (
+                    <code key={w} className="rounded bg-foreground/[0.06] px-1.5 py-0.5 text-[12px]">
+                      {w}
+                    </code>
+                  ))}
+                </span>
               </Row>
             )}
-            {deps.length > 0 && <Row label="Needs">{deps.join(", ")}</Row>}
+            {requires.length > 0 && <Row label="Device needs">{requires.join(", ")} installed first</Row>}
           </dl>
+
+          {pkg.core ? (
+            <p className="flex gap-2 rounded-lg bg-primary/8 p-3 text-[13px]">
+              <Info className="mt-0.5 size-4 shrink-0 text-primary" />
+              Put this on a stick by itself and install it onto a new device before any other package.
+            </p>
+          ) : (
+            occupant &&
+            !installed && (
+              <p className="flex gap-2 rounded-lg bg-warning/10 p-3 text-[13px]">
+                <Info className="mt-0.5 size-4 shrink-0 text-warning" />
+                The drive holds {occupant.name} now. Installing this replaces it.
+              </p>
+            )
+          )}
 
           {canExtract && (
             <label className="flex items-start justify-between gap-4 rounded-lg border bg-card/60 p-3">
               <span>
                 <span className="block text-[13px] font-medium">Unpack on the drive</span>
                 <span className="block text-[12px] text-muted-foreground">
-                  Writes the files into a folder instead of the .zip. Leave off unless the device needs loose files.
+                  {dataInZip
+                    ? `Always on: its ${slot?.dataFile} is inside the zip, and unpacking puts it in place.`
+                    : "Writes the files into a folder instead of the .zip. Leave off unless the device needs loose files."}
                 </span>
               </span>
-              <Switch checked={extractOn} onCheckedChange={(v) => setExtract(pkg.id, v)} />
+              <Switch checked={extractOn} disabled={dataInZip} onCheckedChange={(v) => setExtract(pkg.id, v)} />
             </label>
           )}
 

@@ -10,7 +10,9 @@ export type JobStatus = "pending" | "running" | "done" | "failed" | "cancelled";
 /** Latest progress for one package, plus the stage it was in when it failed. */
 export interface StepProgress extends Progress {
   failedAt?: Stage;
-  /** Download was skipped because a verified copy was cached. */
+  /** Any of the package's files had to be downloaded. */
+  sawDownload?: boolean;
+  /** Download was skipped because verified copies were cached. */
   cached?: boolean;
 }
 
@@ -56,8 +58,9 @@ export const useQueue = create<QueueStore>((set) => ({
         const prev = job.progress[p.id];
         const next: StepProgress = { ...p };
         if (p.stage === "error") next.failedAt = prev?.stage === "error" ? prev.failedAt : prev?.stage;
-        // Going straight from queued to verify means the cache had it.
-        next.cached = prev?.cached || (p.stage === "verify" && (!prev || prev.stage === "queued"));
+        // Past the download stage without ever downloading: the cache had it.
+        next.sawDownload = prev?.sawDownload || p.stage === "download";
+        next.cached = p.stage === "error" ? !!prev?.cached : !next.sawDownload && p.stage !== "queued";
         return { ...job, progress: { ...job.progress, [p.id]: next } };
       }),
     })),

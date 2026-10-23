@@ -12,7 +12,7 @@ use regex::Regex;
 
 use crate::{Error, Result};
 
-static ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9-]{0,63}$").unwrap());
+static ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$").unwrap());
 
 const WINDOWS_DEVICE_NAMES: [&str; 22] = [
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2",
@@ -22,11 +22,11 @@ const WINDOWS_DEVICE_NAMES: [&str; 22] = [
 /// Package and profile ids end up in file names, so they are held to a strict
 /// charset regardless of what a profile allows.
 pub fn validate_id(id: &str) -> Result<()> {
-    if ID_RE.is_match(id) {
+    if id.len() <= 64 && ID_RE.is_match(id) {
         Ok(())
     } else {
         Err(Error::InvalidData(format!(
-            "\"{id}\" is not a valid id (lowercase letters, digits and -)"
+            "\"{id}\" is not a valid id (lowercase letters and digits, separated by single . or -)"
         )))
     }
 }
@@ -75,10 +75,10 @@ pub fn validate_rel(rel: &str) -> Result<()> {
 }
 
 /// Rejects paths whose first segment is one of the profile's reserved names
-/// (always including `.pkgmgr`, the app's own folder).
+/// (always including `.nempm`, the app's own folder).
 pub fn check_not_reserved(rel: &str, reserved: &[String]) -> Result<()> {
     let first = rel.split('/').next().unwrap_or("");
-    if first.eq_ignore_ascii_case(crate::manifest::APP_DIR) || reserved.iter().any(|r| r.eq_ignore_ascii_case(first)) {
+    if crate::manifest::is_app_dir(first) || reserved.iter().any(|r| r.eq_ignore_ascii_case(first)) {
         return Err(Error::Profile(format!(
             "\"{rel}\" is inside the reserved folder \"{first}\""
         )));
@@ -239,7 +239,11 @@ mod tests {
     #[test]
     fn ids_are_strict() {
         assert!(validate_id("example-tool").is_ok());
-        assert!(validate_id("Tool").is_err());
+        assert!(validate_id("my.tool").is_ok());
+        for bad in ["Tool", "my..tool", ".tool", "tool.", "-tool", "con.", "a.-b"] {
+            assert!(validate_id(bad).is_err(), "{bad} should be rejected");
+        }
+        assert!(validate_id(&"a".repeat(65)).is_err());
         assert!(validate_id("../x").is_err());
         assert!(validate_id("a/b").is_err());
         assert!(validate_id("").is_err());
@@ -247,7 +251,7 @@ mod tests {
 
     #[test]
     fn reserved_folders_are_blocked() {
-        assert!(check_not_reserved(".pkgmgr/x", &[]).is_err());
+        assert!(check_not_reserved(".nempm/x", &[]).is_err());
         assert!(check_not_reserved(".PKGMGR", &[]).is_err());
         assert!(check_not_reserved("system/x", &["System".into()]).is_err());
         assert!(check_not_reserved("packages/x", &[]).is_ok());

@@ -70,8 +70,8 @@ export function Sidebar() {
           <Layers className="size-4" />
         </div>
         <div data-tauri-drag-region className="leading-tight">
-          <div className="text-[13px] font-semibold">Nemesis</div>
-          <div className="text-[11px] text-muted-foreground">Package Manager</div>
+          <div className="text-[13px] font-semibold">nempm</div>
+          <div className="text-[11px] text-muted-foreground">Nemesis Package Manager</div>
         </div>
       </div>
 

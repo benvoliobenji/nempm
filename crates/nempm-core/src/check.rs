@@ -8,7 +8,7 @@ use ts_rs::TS;
 
 use crate::drives::DriveInfo;
 use crate::error::io_ctx;
-use crate::fsutil::{self, PART_SUFFIX};
+use crate::fsutil::{self, LEGACY_PART_SUFFIX, PART_SUFFIX};
 use crate::manifest::{self, ManifestState};
 use crate::model::{DriveManifest, Index, InstalledPackage, Profile, ProfileRef};
 use crate::profile::{self, max_file_size};
@@ -39,9 +39,9 @@ pub enum IssueCode {
     PathBlocked,
     PartialFiles,
     MissingFiles,
+    TooManyPackages,
     UntrackedFile,
     TooLargeForFilesystem,
-    LowSpace,
     VolumeLabel,
     UnknownPackage,
 }
@@ -53,7 +53,7 @@ pub enum IssueCode {
 pub enum FixAction {
     /// Create the required folders and an empty drive manifest.
     Initialize,
-    /// Delete leftover `.pkgmgr-part` files and the staging folder.
+    /// Delete leftover `.nempm-part` files and the staging folder.
     RemovePartials,
     /// Forget packages whose files are missing (removing what's left of them)
     /// so they can be installed again.
@@ -272,31 +272,41 @@ pub fn check_drive(root: &Path, drive: &DriveInfo, profile: &Profile, index: Opt
         }
     }
 
+    if let (Some(m), Some(max)) = (&manifest, profile.max_packages)
+        && m.installed.len() > max as usize
+    {
+        let names: Vec<&str> = m.installed.iter().map(|r| r.id.as_str()).collect();
+        issues.push(Issue::new(
+            IssueCode::TooManyPackages,
+            Severity::Error,
+            format!(
+                "This drive holds {} packages ({}), but {name} reads {max} at a time. Uninstall all but one.",
+                names.len(),
+                names.join(", ")
+            ),
+        ));
+    }
+
     if let Some(index) = index {
         let limit = max_file_size(profile, fs_name);
+        // Many packages share a path (every tool writes NEMESIS.data), so
+        // report each untracked path once.
+        let mut untracked = std::collections::BTreeSet::new();
         for pkg in index.packages.iter().filter(|p| p.profiles.contains(&profile.id)) {
             let Ok(place) = profile::placement(profile, pkg) else {
                 continue;
             };
-            for target in [Some(&place.file), place.extract_dir.as_ref()].into_iter().flatten() {
+            // An unpacked zip merges into its folder, so only files count here.
+            let targets = [Some(&place.file), place.data_file.as_ref()];
+            for target in targets.into_iter().flatten() {
                 let owned = manifest.as_ref().is_some_and(|m| m.owner_of(target).is_some());
                 if !owned && paths::join(root, target).exists() {
-                    issues.push(
-                        Issue::new(
-                            IssueCode::UntrackedFile,
-                            Severity::Warning,
-                            format!(
-                                "{target} is already on the drive but wasn't installed by this app. \
-                                 Installing {} will ask before replacing it.",
-                                pkg.name
-                            ),
-                        )
-                        .path(target.clone()),
-                    );
+                    untracked.insert(target.clone());
                 }
             }
+            let largest = pkg.size.max(pkg.data.as_ref().map_or(0, |d| d.size));
             if let Some(limit) = limit
-                && pkg.size > limit
+                && largest > limit
             {
                 issues.push(Issue::new(
                     IssueCode::TooLargeForFilesystem,
@@ -304,29 +314,24 @@ pub fn check_drive(root: &Path, drive: &DriveInfo, profile: &Profile, index: Opt
                     format!(
                         "{} ({}) is too large for {}. Format the drive as exFAT to install it.",
                         pkg.name,
-                        human_bytes(pkg.size),
+                        human_bytes(largest),
                         drive.filesystem_raw
                     ),
                 ));
             }
         }
-        let core_needed: u64 = index
-            .packages
-            .iter()
-            .filter(|p| p.core && p.profiles.contains(&profile.id))
-            .filter(|p| manifest.as_ref().is_none_or(|m| m.get(&p.id).is_none()))
-            .map(|p| p.size)
-            .sum();
-        if core_needed > 0 && core_needed > drive.free_bytes {
-            issues.push(Issue::new(
-                IssueCode::LowSpace,
-                Severity::Warning,
-                format!(
-                    "Only {} free; the core package needs {}.",
-                    human_bytes(drive.free_bytes),
-                    human_bytes(core_needed)
-                ),
-            ));
+        for target in untracked {
+            issues.push(
+                Issue::new(
+                    IssueCode::UntrackedFile,
+                    Severity::Warning,
+                    format!(
+                        "{target} is already on the drive but wasn't put there by this app. \
+                         Installing a package will ask before replacing it."
+                    ),
+                )
+                .path(target),
+            );
         }
     }
 
@@ -348,7 +353,9 @@ pub fn check_drive(root: &Path, drive: &DriveInfo, profile: &Profile, index: Opt
         }
     }
 
-    let ready = !issues.iter().any(|i| i.severity == Severity::Error);
+    // An uninitialized drive has nothing wrong with it, but can't take an
+    // install until it's set up.
+    let ready = manifest.is_some() && !issues.iter().any(|i| i.severity == Severity::Error);
     CheckReport {
         profile: profile.as_ref(),
         drive: drive.clone(),
@@ -391,8 +398,8 @@ pub fn human_bytes(n: u64) -> String {
     }
 }
 
-/// Leftovers from interrupted installs: `*.pkgmgr-part` files in the folders
-/// the profile writes to, plus anything in `.pkgmgr/staging`.
+/// Leftovers from interrupted installs: `*.nempm-part` files in the folders
+/// the profile writes to, plus anything in `.nempm/staging`.
 pub fn find_partials(root: &Path, profile: &Profile) -> Vec<std::path::PathBuf> {
     let mut dirs: Vec<String> = vec![String::new()];
     dirs.extend(profile.required_dirs.iter().cloned());
@@ -425,9 +432,10 @@ fn collect_parts(dir: &Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         let Ok(kind) = entry.file_type() else { continue };
-        if kind.is_file() && path.to_string_lossy().ends_with(PART_SUFFIX) {
+        let name = path.to_string_lossy();
+        if kind.is_file() && (name.ends_with(PART_SUFFIX) || name.ends_with(LEGACY_PART_SUFFIX)) {
             out.push(path);
-        } else if kind.is_dir() && depth > 0 && entry.file_name() != manifest::APP_DIR {
+        } else if kind.is_dir() && depth > 0 && !manifest::is_app_dir(&entry.file_name().to_string_lossy()) {
             collect_parts(&path, depth - 1, out);
         }
     }
@@ -480,7 +488,7 @@ pub fn fix_drive(root: &Path, profile: &Profile, index: Option<&Index>, fixes: &
                 init_drive(root, profile)?;
             }
             FixAction::RemovePartials => remove_partials(root, profile)?,
-            FixAction::ForgetMissing => forget_missing(root)?,
+            FixAction::ForgetMissing => forget_missing(root, profile)?,
             FixAction::MigrateProfile => migrate_profile(root, profile, index)?,
         }
     }
@@ -511,7 +519,7 @@ fn remove_partials(root: &Path, profile: &Profile) -> Result<()> {
     Ok(())
 }
 
-fn forget_missing(root: &Path) -> Result<()> {
+fn forget_missing(root: &Path, profile: &Profile) -> Result<()> {
     let mut m = manifest::load(root)?;
     let broken: Vec<InstalledPackage> = m
         .installed
@@ -520,7 +528,7 @@ fn forget_missing(root: &Path) -> Result<()> {
         .cloned()
         .collect();
     for rec in &broken {
-        crate::uninstall::remove_files(root, rec)?;
+        crate::uninstall::remove_files(root, rec, &profile.required_dirs)?;
         m.remove(&rec.id);
     }
     manifest::save(root, &mut m)
@@ -586,33 +594,97 @@ fn migrate_one(
     )?;
 
     let mut updated = rec.clone();
+    let old_data = rec.data.clone();
+    // The package's own files.
     if rec.extracted {
         let new_dir = place
             .extract_dir
+            .clone()
             .ok_or_else(|| Error::Profile("the slot no longer allows unpacked packages".into()))?;
-        let old_dir = rec.dirs.first().cloned().unwrap_or_default();
-        if old_dir.is_empty() || old_dir == new_dir {
-            return Ok(None);
+        let old_dir = rec
+            .unpacked_into
+            .clone()
+            .or_else(|| rec.dirs.first().cloned())
+            .unwrap_or_default();
+        if old_dir != new_dir {
+            // Move file by file: the new folder may be the drive root, which
+            // can't be the target of a folder rename.
+            let relocate = |p: &str| -> Option<String> {
+                let rest = if old_dir.is_empty() {
+                    p
+                } else {
+                    p.strip_prefix(&format!("{old_dir}/"))?
+                };
+                Some(paths::rel_join(&new_dir, rest))
+            };
+            let moves: Vec<(String, String)> = rec
+                .paths
+                .iter()
+                .filter(|p| Some(*p) != old_data.as_ref())
+                .filter_map(|p| relocate(p).map(|to| (p.clone(), to)))
+                .collect();
+            // Check every destination first so a clash can't leave the
+            // package half moved.
+            let sources: std::collections::HashSet<String> =
+                moves.iter().map(|(f, _)| f.to_ascii_lowercase()).collect();
+            if let Some((_, to)) = moves
+                .iter()
+                .find(|(_, to)| paths::join(root, to).exists() && !sources.contains(&to.to_ascii_lowercase()))
+            {
+                return Err(Error::Conflict { path: to.clone() });
+            }
+            for (from, to) in &moves {
+                if from != to {
+                    move_path(root, from, to)?;
+                }
+                for p in &mut updated.paths {
+                    if p == from {
+                        *p = to.clone();
+                    }
+                }
+            }
+            updated.dirs = rec
+                .dirs
+                .iter()
+                .filter(|d| **d != old_dir)
+                .filter_map(|d| relocate(d))
+                .chain((!new_dir.is_empty()).then(|| new_dir.clone()))
+                .collect();
+            for dir in rec.dirs.iter().filter(|d| !d.is_empty()) {
+                fsutil::prune_empty_dirs(&paths::join(root, dir), root);
+            }
+            updated.unpacked_into = Some(new_dir);
         }
-        move_path(root, &old_dir, &new_dir)?;
-        updated.paths = rec
-            .paths
-            .iter()
-            .map(|p| match p.strip_prefix(&format!("{old_dir}/")) {
-                Some(rest) => paths::rel_join(&new_dir, rest),
-                None => p.clone(),
-            })
-            .collect();
-        updated.dirs = vec![new_dir];
-    } else {
-        let Some(old) = rec.paths.first() else { return Ok(None) };
-        if *old == place.file {
-            return Ok(None);
-        }
+    } else if let Some(old) = rec.paths.iter().find(|p| Some(*p) != old_data.as_ref())
+        && *old != place.file
+    {
         move_path(root, old, &place.file)?;
-        updated.paths = vec![place.file];
+        for p in &mut updated.paths {
+            if p == old {
+                *p = place.file.clone();
+            }
+        }
     }
-    Ok(Some(updated))
+    // Its data file.
+    match (&old_data, &place.data_file) {
+        (Some(old), Some(new)) if old != new => {
+            move_path(root, old, new)?;
+            for p in &mut updated.paths {
+                if p == old {
+                    *p = new.clone();
+                }
+            }
+            updated.data = Some(new.clone());
+        }
+        (Some(old), None) => {
+            // The new layout has no data file for this slot.
+            fsutil::remove_file_if_exists(&paths::join(root, old)).map_err(io_ctx(format!("removing {old}")))?;
+            updated.paths.retain(|p| p != old);
+            updated.data = None;
+        }
+        _ => {}
+    }
+    Ok((updated != *rec).then_some(updated))
 }
 
 fn move_path(root: &Path, from: &str, to: &str) -> Result<()> {
@@ -764,15 +836,51 @@ pub(crate) mod tests {
         let profile = nemesis();
         let report = check_drive(dir.path(), &drive(dir.path(), "exfat"), &profile, None);
         assert!(!report.ready);
-        assert!(codes(&report).contains(&IssueCode::NotInitialized));
-        assert!(codes(&report).contains(&IssueCode::MissingDir));
+        assert_eq!(codes(&report), [IssueCode::NotInitialized]);
 
         fix_drive(dir.path(), &profile, None, &[FixAction::Initialize]).unwrap();
         let report = check_drive(dir.path(), &drive(dir.path(), "exfat"), &profile, None);
         assert!(report.ready, "{:?}", report.issues);
         assert!(report.issues.is_empty(), "{:?}", report.issues);
+        assert!(dir.path().join(".nempm/manifest.json").is_file());
+    }
+
+    #[test]
+    fn required_folders_are_created_and_checked() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut profile = nemesis();
+        profile.required_dirs = vec!["packages".into()];
+        let report = check_drive(dir.path(), &drive(dir.path(), "exfat"), &profile, None);
+        assert!(codes(&report).contains(&IssueCode::MissingDir));
+        fix_drive(dir.path(), &profile, None, &[FixAction::Initialize]).unwrap();
         assert!(dir.path().join("packages").is_dir());
-        assert!(dir.path().join(".pkgmgr/manifest.json").is_file());
+    }
+
+    #[test]
+    fn more_packages_than_the_profile_allows_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = nemesis();
+        let mut m = init_drive(dir.path(), &profile).unwrap();
+        for id in ["a", "b"] {
+            m.upsert(InstalledPackage {
+                id: id.into(),
+                version: "1.0.0".into(),
+                sha256: "a".repeat(64),
+                slot: "packages".into(),
+                format: crate::model::PackageFormat::Zip,
+                extracted: false,
+                paths: vec![],
+                dirs: vec![],
+                data: None,
+                size: 1,
+                unpacked_into: None,
+                installed_at: String::new(),
+            });
+        }
+        manifest::save(dir.path(), &mut m).unwrap();
+        let report = check_drive(dir.path(), &drive(dir.path(), "exfat"), &profile, None);
+        assert!(!report.ready);
+        assert!(codes(&report).contains(&IssueCode::TooManyPackages));
     }
 
     #[test]
@@ -796,9 +904,10 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let profile = nemesis();
         init_drive(dir.path(), &profile).unwrap();
-        fs::write(dir.path().join("packages/tool.zip.pkgmgr-part"), b"half").unwrap();
-        fs::write(dir.path().join("NEMESIS.data.pkgmgr-part"), b"half").unwrap();
-        fs::create_dir_all(dir.path().join(".pkgmgr/staging/tool-1")).unwrap();
+        fs::create_dir_all(dir.path().join("packages")).unwrap();
+        fs::write(dir.path().join("packages/tool.zip.nempm-part"), b"half").unwrap();
+        fs::write(dir.path().join("NEMESIS.data.nempm-part"), b"half").unwrap();
+        fs::create_dir_all(dir.path().join(".nempm/staging/tool-1")).unwrap();
         fs::write(dir.path().join("packages/keep.txt"), b"user file").unwrap();
 
         assert_eq!(find_partials(dir.path(), &profile).len(), 3);

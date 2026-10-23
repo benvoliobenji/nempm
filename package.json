@@ -1,5 +1,5 @@
 {
-  "name": "pkgmgr-app",
+  "name": "nempm",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -15,7 +15,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "bindings": "cargo test --workspace --lib -q",
-    "dev:registry": "cargo run -p pkgmgr-core --example dev_registry",
+    "dev:registry": "cargo run -p nempm-core --example dev_registry",
     "version:check": "node scripts/version.mjs check",
     "version:set": "node scripts/version.mjs set",
     "configure": "node scripts/configure.mjs"

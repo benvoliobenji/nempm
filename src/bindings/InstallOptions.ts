@@ -6,9 +6,14 @@ export type InstallOptions = {
  */
 extract: Record<string, boolean>, 
 /**
- * Replace files at the target path that weren't installed by this app.
+ * Replace files at the target paths that weren't installed by this app.
  */
 replaceUntracked: boolean, 
+/**
+ * Remove the package(s) already on the drive to make room, where the
+ * profile limits how many a drive holds.
+ */
+replaceInstalled: boolean, 
 /**
  * Reinstall packages that are already at the index version.
  */

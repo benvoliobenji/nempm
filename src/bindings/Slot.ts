@@ -17,4 +17,9 @@ file?: string, allow: Array<PackageFormat>, extract: ExtractPolicy,
 /**
  * Folder a zip is unpacked into; defaults to `<path>/{id}`.
  */
-extractDir?: string, max?: number, };
+extractDir?: string, 
+/**
+ * Where a package's data file goes (Nemesis: `NEMESIS.data`). Packages
+ * in a slot with one publish it as an asset or carry it in their zip.
+ */
+dataFile?: string, max?: number, };

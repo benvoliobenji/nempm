@@ -1,11 +1,13 @@
 //! A local stand-in for the registry and GitHub Releases, for trying the app
 //! end to end before anything is published.
 //!
-//!     cargo run -p pkgmgr-core --example dev_registry [-- --port 8787]
+//!     cargo run -p nempm-core --example dev_registry [-- --port 8787]
 //!
-//! It builds a sample core tar and two tool zips, writes an index.json that
-//! points at them, and serves everything from http://127.0.0.1:<port>/. Then
-//! start the app with PKGMGR_INDEX_URL=http://127.0.0.1:<port>/index.json, or
+//! It builds a sample Core tar, two tool zips that each come with a
+//! NEMESIS.data asset, and one zip that carries its NEMESIS.data inside,
+//! writes an index.json that points at them, and serves everything from
+//! http://127.0.0.1:<port>/. Then
+//! start the app with NEMPM_INDEX_URL=http://127.0.0.1:<port>/index.json, or
 //! paste that URL into Settings → Index URL. Supports Range requests, so
 //! resumed downloads work too.
 
@@ -40,8 +42,12 @@ struct Sample {
     name: &'static str,
     description: &'static str,
     format: &'static str,
+    /// The release asset's file name (the Core tar keeps its own on the drive).
+    file: &'static str,
     body: Vec<u8>,
-    deps: &'static [&'static str],
+    /// This package's NEMESIS.data, published in the same release. Without
+    /// one, a tool's zip carries it inside.
+    data: Option<Vec<u8>>,
     extract: bool,
 }
 
@@ -57,45 +63,52 @@ fn main() {
         Sample {
             id: "nemesis-core",
             name: "Nemesis Core",
-            description: "The core data, written to the drive root as NEMESIS.data.",
+            description: "Put this on a stick by itself to set up a new device. Written to the drive root.",
             format: "tar",
+            file: "ota_package.tar",
             body: sample_tar(24 * 1024 * 1024),
-            deps: &[],
+            data: None,
             extract: false,
         },
         Sample {
             id: "example-tool",
             name: "Example Tool",
-            description: "A small tool package, written to packages/example-tool.zip.",
+            description: "A small tool. Writes NEMESIS.data and packages/example-tool.zip.",
             format: "zip",
+            file: "example-tool.zip",
             body: sample_zip(&[
-                (
-                    "README.txt",
-                    b"Example tool
-"
-                    .to_vec(),
-                ),
-                (
-                    "bin/run.sh",
-                    b"#!/bin/sh
-echo hello
-"
-                    .to_vec(),
-                ),
+                ("README.txt", b"Example tool\n".to_vec()),
+                ("bin/run.sh", b"#!/bin/sh\necho hello\n".to_vec()),
             ]),
-            deps: &["nemesis-core"],
+            data: Some(b"NEMESIS.data for example-tool 1.0.0\n".to_vec()),
             extract: false,
         },
         Sample {
-            id: "unpacked-tool",
-            name: "Unpacked Tool",
-            description: "Unpacked by default into packages/unpacked-tool/.",
+            id: "my.tool",
+            name: "My Tool",
+            description: "Laid out like a real Nemesis package; unpacked by default into the drive root.",
             format: "zip",
+            file: "my.tool.zip",
             body: sample_zip(&[
-                ("tool/config.json", br#"{"enabled":true}"#.to_vec()),
-                ("tool/data.bin", vec![7u8; 2 * 1024 * 1024]),
+                ("packages/my.tool.inner.zip", vec![7u8; 2 * 1024 * 1024]),
+                ("mytool/install.sh", b"#!/bin/sh\necho installing\n".to_vec()),
+                ("mytool/config.json", br#"{"enabled":true}"#.to_vec()),
             ]),
-            deps: &["nemesis-core"],
+            data: Some(b"NEMESIS.data for my.tool 1.0.0\n".to_vec()),
+            extract: true,
+        },
+        Sample {
+            id: "my.kit",
+            name: "My Kit",
+            description: "Just a zip with the whole stick layout, NEMESIS.data included. Always unpacked.",
+            format: "zip",
+            file: "my-kit-install-usb.zip",
+            body: sample_zip(&[
+                ("NEMESIS.data", b"NEMESIS.data for my.kit 1.0.0\n".to_vec()),
+                ("packages/my.kit.inner.zip", vec![9u8; 1024 * 1024]),
+                ("mykit/install.sh", b"#!/bin/sh\necho installing\n".to_vec()),
+            ]),
+            data: None,
             extract: true,
         },
     ];
@@ -103,28 +116,42 @@ echo hello
     let mut files: HashMap<String, Vec<u8>> = HashMap::new();
     let mut packages = Vec::new();
     for s in assets {
-        let file = format!("{}.{}", s.id, s.format);
-        packages.push(serde_json::json!({
+        let release = format!("/releases/{}/v1.0.0", s.id);
+        let data = s.data.as_ref().map(|d| {
+            serde_json::json!({
+                "url": format!("{base}{release}/NEMESIS.data"),
+                "sha256": hex::encode(Sha256::digest(d)),
+                "size": d.len(),
+            })
+        });
+        let mut pkg = serde_json::json!({
             "id": s.id,
             "name": s.name,
             "description": s.description,
             "version": "1.0.0",
             "format": s.format,
             "core": s.format == "tar",
-            "url": format!("{base}/assets/{file}"),
+            "url": format!("{base}{release}/{}", s.file),
             "sha256": hex::encode(Sha256::digest(&s.body)),
             "size": s.body.len(),
             "extract": s.extract,
             "slot": if s.format == "tar" { "core" } else { "packages" },
             "profiles": ["nemesis"],
-            "deps": s.deps,
-        }));
-        files.insert(format!("/assets/{file}"), s.body);
+            "requires": if s.format == "tar" { vec![] } else { vec!["nemesis-core"] },
+        });
+        if let Some(data) = data {
+            pkg["data"] = data;
+        }
+        packages.push(pkg);
+        files.insert(format!("{release}/{}", s.file), s.body);
+        if let Some(d) = s.data {
+            files.insert(format!("{release}/NEMESIS.data"), d);
+        }
     }
     let profile: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/nemesis.json")).unwrap();
     let index = serde_json::json!({
         "schemaVersion": 1,
-        "generatedAt": pkgmgr_core::manifest::now(),
+        "generatedAt": nempm_core::manifest::now(),
         "packages": packages,
         "profiles": [profile],
     });
@@ -132,7 +159,7 @@ echo hello
 
     let server = tiny_http::Server::http(("127.0.0.1", port)).expect("port in use? pass --port <n>");
     println!("Dev registry at {base}/index.json");
-    println!("Run the app with PKGMGR_INDEX_URL={base}/index.json, or set it in Settings.");
+    println!("Run the app with NEMPM_INDEX_URL={base}/index.json, or set it in Settings.");
     for req in server.incoming_requests() {
         let path = req.url().split('?').next().unwrap_or("").to_string();
         let Some(body) = files.get(&path) else {

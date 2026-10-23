@@ -74,3 +74,8 @@ export function compareVersions(a: string, b: string): number {
   if (!y.pre) return -1;
   return x.pre < y.pre ? -1 : 1;
 }
+
+/** Where an unpacked zip goes: a folder, or the drive root. */
+export function unpackLabel(dir: string): string {
+  return dir ? `${dir}/ (unpacked)` : "drive root (unpacked)";
+}

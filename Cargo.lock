@@ -2243,6 +2243,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "nempm"
+version = "0.1.0"
+dependencies = [
+ "nempm-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "ts-rs",
+ "window-vibrancy",
+]
+
+[[package]]
+name = "nempm-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "hex",
+ "libc",
+ "regex",
+ "reqwest",
+ "rustls",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sysinfo",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "tokio",
+ "ts-rs",
+ "url",
+ "windows-sys 0.61.2",
+ "zip 9.0.5",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2704,51 +2749,6 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
-
-[[package]]
-name = "pkgmgr"
-version = "0.1.0"
-dependencies = [
- "pkgmgr-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "ts-rs",
- "window-vibrancy",
-]
-
-[[package]]
-name = "pkgmgr-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "futures-util",
- "hex",
- "libc",
- "regex",
- "reqwest",
- "rustls",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "sysinfo",
- "tar",
- "tempfile",
- "thiserror 2.0.21",
- "tiny_http",
- "tokio",
- "ts-rs",
- "url",
- "windows-sys 0.61.2",
- "zip 9.0.5",
-]
 
 [[package]]
 name = "plist"

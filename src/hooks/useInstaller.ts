@@ -21,9 +21,9 @@ export function useDriveLabel() {
 }
 
 /**
- * Starts an install: plans it, asks for confirmation when it pulls in
- * dependencies, replaces untracked files or is the first write on macOS,
- * then adds it to the queue.
+ * Starts an install: plans it, asks for confirmation when it swaps out the
+ * package already on the drive, replaces files this app didn't write, or is
+ * the first write on macOS, then adds it to the queue.
  */
 export function useInstaller() {
   const { data: info } = useAppInfo();
@@ -40,18 +40,18 @@ export function useInstaller() {
       const options: InstallOptions = {
         extract: Object.fromEntries(Object.entries(extract)),
         replaceUntracked: false,
+        replaceInstalled: false,
         reinstall: false,
         ...overrides,
       };
       try {
         const plan = await api.planInstall(drivePath, profileId, ids, options);
-        if (plan.steps.length === 0) {
+        if (plan.steps.length === 0 && plan.removes.length === 0) {
           toast.success(plan.upToDate.length === 1 ? "Already up to date." : "Everything is already up to date.");
           return;
         }
         const firstMacWrite = info?.platform === "macos" && !settings?.writePermissionExplained;
-        const needsConfirm =
-          firstMacWrite || plan.untracked.length > 0 || plan.steps.some((s) => s.reason === "dependency");
+        const needsConfirm = firstMacWrite || plan.untracked.length > 0 || plan.removes.length > 0;
         const job = { plan, ids, options, drive: drivePath, driveLabel: driveLabel(drivePath), profile: profileId };
         if (needsConfirm) {
           setConfirm(job);

@@ -1,20 +1,20 @@
 [package]
-name = "pkgmgr"
-description = "Nemesis Package Manager"
+name = "nempm"
+description = "nempm, the Nemesis Package Manager"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [lib]
-name = "pkgmgr_lib"
+name = "nempm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-pkgmgr-core = { path = "../crates/pkgmgr-core" }
+nempm-core = { path = "../crates/nempm-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2.12", features = ["macos-private-api"] }

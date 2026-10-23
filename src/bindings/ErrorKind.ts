@@ -3,4 +3,4 @@
 /**
  * Machine-readable error category, sent to the frontend next to the message.
  */
-export type ErrorKind = "network" | "httpStatus" | "hashMismatch" | "sizeMismatch" | "driveFaulty" | "diskFull" | "driveDisconnected" | "notEnoughSpace" | "fileTooLarge" | "profile" | "unknownPackage" | "unknownProfile" | "dependency" | "conflict" | "unsafeArchive" | "invalidData" | "notInitialized" | "cancelled" | "busy" | "eject" | "io";
+export type ErrorKind = "network" | "httpStatus" | "hashMismatch" | "sizeMismatch" | "driveFaulty" | "diskFull" | "driveDisconnected" | "notEnoughSpace" | "fileTooLarge" | "profile" | "unknownPackage" | "unknownProfile" | "dependency" | "conflict" | "occupied" | "unsafeArchive" | "invalidData" | "notInitialized" | "cancelled" | "busy" | "eject" | "io";

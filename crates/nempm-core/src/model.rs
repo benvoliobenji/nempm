@@ -1,5 +1,5 @@
 //! Wire types shared with the registry (`index.json`), the drive
-//! (`.pkgmgr/manifest.json`) and the frontend (generated TypeScript bindings).
+//! (`.nempm/manifest.json`) and the frontend (generated TypeScript bindings).
 //!
 //! Unknown fields are ignored everywhere so an older app keeps working with a
 //! newer index.
@@ -54,16 +54,69 @@ pub struct Package {
     pub sha256: String,
     #[ts(type = "number")]
     pub size: u64,
+    /// The data file published in the same release (Nemesis: `NEMESIS.data`),
+    /// written to the drive next to the package. Without one, a zip in a slot
+    /// with a data file carries it inside and is always unpacked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub data: Option<DataAsset>,
     /// Default for unpacking a zip; the user can override it per install.
     #[serde(default)]
     pub extract: bool,
     pub slot: String,
     pub profiles: Vec<String>,
-    #[serde(default)]
-    pub deps: Vec<String>,
+    /// Packages that must already be on the target device (not the drive).
+    /// Shown to the user; never installed automatically.
+    #[serde(default, alias = "deps")]
+    pub requires: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub homepage: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DataAsset {
+    pub url: String,
+    pub sha256: String,
+    #[ts(type = "number")]
+    pub size: u64,
+}
+
+/// One downloadable file: a package's main asset or its data file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Asset {
+    /// For messages: "Example Tool" or "Example Tool's data file".
+    pub label: String,
+    pub url: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+impl Package {
+    pub fn asset(&self) -> Asset {
+        Asset {
+            label: self.name.clone(),
+            url: self.url.clone(),
+            sha256: self.sha256.clone(),
+            size: self.size,
+        }
+    }
+
+    pub fn data_asset(&self) -> Option<Asset> {
+        self.data.as_ref().map(|d| Asset {
+            label: format!("{}'s data file", self.name),
+            url: d.url.clone(),
+            sha256: d.sha256.clone(),
+            size: d.size,
+        })
+    }
+
+    /// Bytes written to the drive (package plus data file).
+    pub fn total_size(&self) -> u64 {
+        self.size + self.data.as_ref().map_or(0, |d| d.size)
+    }
 }
 
 /// Where a kind of package goes in a profile's layout.
@@ -88,6 +141,11 @@ pub struct Slot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub extract_dir: Option<String>,
+    /// Where a package's data file goes (Nemesis: `NEMESIS.data`). Packages
+    /// in a slot with one publish it as an asset or carry it in their zip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub data_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub max: Option<u32>,
@@ -139,6 +197,11 @@ pub struct Profile {
     #[serde(default)]
     #[ts(type = "Record<string, number>")]
     pub max_file_bytes: BTreeMap<String, u64>,
+    /// How many packages a drive holds at once (Nemesis: 1). Installing
+    /// another replaces what's there, once the user confirms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_packages: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub volume_label: Option<VolumeLabelRule>,
@@ -215,8 +278,15 @@ pub struct InstalledPackage {
     /// uninstall once empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirs: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deps: Vec<String>,
+    /// Which of `paths` is the package's data file, if it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub data: Option<String>,
+    /// For an unpacked package, the folder its zip went into ("" is the
+    /// drive root). Older records leave it out; their first `dirs` entry is it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unpacked_into: Option<String>,
     #[serde(default)]
     #[ts(type = "number")]
     pub size: u64,
@@ -231,7 +301,7 @@ fn one() -> u32 {
     1
 }
 
-/// `.pkgmgr/manifest.json` on the drive: makes the drive self-describing on
+/// `.nempm/manifest.json` on the drive: makes the drive self-describing on
 /// any computer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -288,7 +358,8 @@ mod tests {
         .unwrap();
         assert!(!pkg.core);
         assert!(!pkg.extract);
-        assert!(pkg.deps.is_empty());
+        assert!(pkg.requires.is_empty());
+        assert!(pkg.data.is_none());
     }
 
     #[test]
@@ -308,11 +379,12 @@ mod tests {
                 extracted: false,
                 paths: vec!["packages/a.zip".into()],
                 dirs: vec![],
-                deps: vec![],
+                data: None,
                 size: 1,
+                unpacked_into: None,
                 installed_at: "2026-10-21T19:00:00Z".into(),
             }],
-            written_by: "pkgmgr 0.1.0".into(),
+            written_by: "nempm 0.1.0".into(),
             updated_at: None,
         };
         let text = serde_json::to_string(&manifest).unwrap();

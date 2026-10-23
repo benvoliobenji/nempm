@@ -7,7 +7,6 @@ import { EmptyState, Skeleton } from "@/components/ui/misc";
 import { useDriveState, useIndex } from "@/hooks/queries";
 import { useInstaller, useIsBusy } from "@/hooks/useInstaller";
 import { errorMessage } from "@/lib/errors";
-import { formatBytes } from "@/lib/utils";
 import { useApp } from "@/stores/app";
 import { ScreenHeader } from "./screen-header";
 
@@ -28,9 +27,10 @@ export function BrowseScreen() {
   }, [result, search, profileId]);
 
   const installedById = new Map(drive?.installed.map((i) => [i.record.id, i]) ?? []);
+  const profile = result?.index.profiles.find((p) => p.id === profileId);
   const core = result?.index.packages.find((p) => p.core && (!profileId || p.profiles.includes(profileId)));
   const ready = drive?.status === "ready";
-  const coreMissing = ready && core && !installedById.has(core.id);
+  const onePerDrive = profile?.maxPackages === 1;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -75,20 +75,18 @@ export function BrowseScreen() {
             Use <b>Initialize</b> in the Drive check on the right to create the folders the device expects.
           </Banner>
         )}
-        {coreMissing && core && (
-          <div className="mb-5 flex items-center gap-4 rounded-xl border border-primary/25 bg-gradient-to-r from-primary/12 to-primary/4 p-4">
+        {onePerDrive && result && (
+          <div className="mb-5 flex items-center gap-4 rounded-xl border border-primary/20 bg-gradient-to-r from-primary/10 to-primary/3 p-4">
             <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
               <Layers className="size-5" />
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">{core.name} isn't on this drive yet</p>
-              <p className="text-[13px] text-muted-foreground">
-                Every other package needs it. {formatBytes(core.size)}.
+            <div className="min-w-0 flex-1 text-[13px]">
+              <p className="text-sm font-semibold">One package per stick</p>
+              <p className="text-muted-foreground">
+                Installing a package replaces whatever is on the stick.
+                {core && ` Set up a new device with ${core.name} first, then bring each tool over on its own stick.`}
               </p>
             </div>
-            <Button disabled={busy} onClick={() => void install([core.id])}>
-              Install {core.name}
-            </Button>
           </div>
         )}
 

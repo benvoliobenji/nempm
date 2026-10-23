@@ -2,7 +2,7 @@
 //! frontend), download in the background, install only on the user's
 //! confirmation and never while a drive is being written.
 
-use pkgmgr_core::{Error, Result};
+use nempm_core::{Error, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Url};
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -13,7 +13,7 @@ use crate::state::AppState;
 
 /// Beta builds: `latest.json` for the newest tag of any kind, published to the
 /// app repo's GitHub Pages by the release workflow.
-const BETA_ENDPOINT: &str = "https://OWNER.github.io/pkgmgr-app/updater/beta/latest.json";
+const BETA_ENDPOINT: &str = "https://benvoliobenji.github.io/nempm/updater/beta/latest.json";
 
 pub struct PendingUpdate {
     update: Update,

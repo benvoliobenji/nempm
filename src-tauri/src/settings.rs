@@ -6,9 +6,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// Where the registry's CI publishes the index. Set OWNER with
-/// `pnpm configure-owner <github-owner>`.
-pub const DEFAULT_INDEX_URL: &str = "https://OWNER.github.io/pkgmgr-registry/index.json";
+/// Where the registry's CI (benvoliobenji/nempm_reg) publishes the index.
+pub const DEFAULT_INDEX_URL: &str = "https://benvoliobenji.github.io/nempm_reg/index.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -81,7 +80,7 @@ impl Settings {
             fs::create_dir_all(dir)?;
         }
         let text = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        pkgmgr_core::fsutil::write_atomic(path, &text)
+        nempm_core::fsutil::write_atomic(path, &text)
     }
 }
 
@@ -91,7 +90,7 @@ mod tests {
 
     #[test]
     fn missing_and_partial_files_use_defaults() {
-        let dir = std::env::temp_dir().join(format!("pkgmgr-settings-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("nempm-settings-{}", std::process::id()));
         let path = dir.join("settings.json");
         let _ = fs::remove_file(&path);
         assert_eq!(Settings::load(&path).theme, Theme::System);

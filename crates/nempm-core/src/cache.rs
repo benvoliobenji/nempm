@@ -19,7 +19,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::error::io_ctx;
 use crate::http::{check_url, network_error};
-use crate::model::Package;
+use crate::model::Asset;
 use crate::progress::{CancelToken, Reporter, Stage};
 use crate::{Error, Result, fsutil};
 
@@ -76,25 +76,25 @@ impl Downloader {
         }
     }
 
-    /// Returns the path of a verified copy of `pkg` in the cache, downloading
+    /// Returns the path of a verified copy of `asset` in the cache, downloading
     /// it if needed. A cached file that no longer hashes correctly is deleted
     /// and downloaded again.
-    pub async fn ensure(&self, pkg: &Package, reporter: &Arc<Reporter>) -> Result<PathBuf> {
+    pub async fn ensure(&self, asset: &Asset, reporter: &Arc<Reporter>) -> Result<PathBuf> {
         let dir = pkgs_dir(&self.cache_dir);
         fs::create_dir_all(&dir).map_err(io_ctx("creating the download cache"))?;
-        let final_path = dir.join(&pkg.sha256);
+        let final_path = dir.join(&asset.sha256);
 
         if final_path.exists() {
-            reporter.stage(Stage::Verify, 0, pkg.size);
-            let (sha, len) = self.hash(&final_path, Stage::Verify, pkg.size, reporter).await?;
-            if sha == pkg.sha256 && len == pkg.size {
-                reporter.stage(Stage::Verify, pkg.size, pkg.size);
+            reporter.stage(Stage::Verify, 0, asset.size);
+            let (sha, len) = self.hash(&final_path, Stage::Verify, asset.size, reporter).await?;
+            if sha == asset.sha256 && len == asset.size {
+                reporter.stage(Stage::Verify, asset.size, asset.size);
                 return Ok(final_path);
             }
             fsutil::remove_file_if_exists(&final_path).map_err(io_ctx("removing a damaged cached file"))?;
         }
 
-        self.download(pkg, &dir, reporter).await?;
+        self.download(asset, &dir, reporter).await?;
         Ok(final_path)
     }
 
@@ -109,16 +109,16 @@ impl Downloader {
         .map_err(|e| Error::InvalidData(format!("Hashing task failed: {e}")))?
     }
 
-    async fn download(&self, pkg: &Package, dir: &Path, reporter: &Arc<Reporter>) -> Result<()> {
-        check_url(&pkg.url)?;
-        let part = dir.join(format!("{}.part", pkg.sha256));
+    async fn download(&self, asset: &Asset, dir: &Path, reporter: &Arc<Reporter>) -> Result<()> {
+        check_url(&asset.url)?;
+        let part = dir.join(format!("{}.part", asset.sha256));
         let mut attempt = 0;
         let hasher = loop {
             attempt += 1;
-            match self.attempt(pkg, &part, reporter).await {
+            match self.attempt(asset, &part, reporter).await {
                 Ok(hasher) => break hasher,
                 Err(e) if e.is_retryable() && attempt < MAX_ATTEMPTS => {
-                    reporter.stage(Stage::Download, fsutil_len(&part), pkg.size);
+                    reporter.stage(Stage::Download, fsutil_len(&part), asset.size);
                     let wait = (self.backoff)(attempt);
                     let deadline = tokio::time::Instant::now() + wait;
                     while tokio::time::Instant::now() < deadline {
@@ -132,33 +132,33 @@ impl Downloader {
 
         let actual = hex::encode(hasher.finalize());
         let len = fsutil_len(&part);
-        if len != pkg.size {
+        if len != asset.size {
             let _ = fs::remove_file(&part);
             return Err(Error::SizeMismatch {
-                id: pkg.id.clone(),
-                expected: pkg.size,
+                id: asset.label.clone(),
+                expected: asset.size,
                 actual: len,
             });
         }
-        if actual != pkg.sha256 {
+        if actual != asset.sha256 {
             let _ = fs::remove_file(&part);
             return Err(Error::HashMismatch {
-                id: pkg.id.clone(),
-                expected: pkg.sha256.clone(),
+                id: asset.label.clone(),
+                expected: asset.sha256.clone(),
                 actual,
             });
         }
-        let final_path = dir.join(&pkg.sha256);
+        let final_path = dir.join(&asset.sha256);
         fs::rename(&part, &final_path).map_err(io_ctx("saving the download"))?;
-        reporter.stage(Stage::Verify, pkg.size, pkg.size);
+        reporter.stage(Stage::Verify, asset.size, asset.size);
         Ok(())
     }
 
     /// One HTTP request, resuming from whatever `part` already holds.
-    async fn attempt(&self, pkg: &Package, part: &Path, reporter: &Arc<Reporter>) -> Result<Sha256> {
+    async fn attempt(&self, asset: &Asset, part: &Path, reporter: &Arc<Reporter>) -> Result<Sha256> {
         self.cancel.check()?;
         let mut existing = fsutil_len(part);
-        if existing > pkg.size {
+        if existing > asset.size {
             let _ = fs::remove_file(part);
             existing = 0;
         }
@@ -187,12 +187,12 @@ impl Downloader {
             .map_err(io_ctx("reading a partial download"))?;
             hasher = h;
             existing = n;
-            if existing == pkg.size {
+            if existing == asset.size {
                 return Ok(hasher);
             }
         }
 
-        let mut request = self.client.get(&pkg.url);
+        let mut request = self.client.get(&asset.url);
         if existing > 0 {
             request = request.header(RANGE, format!("bytes={existing}-"));
         }
@@ -229,13 +229,13 @@ impl Downloader {
             s => {
                 return Err(Error::HttpStatus {
                     status: s.as_u16(),
-                    url: pkg.url.clone(),
+                    url: asset.url.clone(),
                 });
             }
         };
 
         let mut out = tokio::io::BufWriter::with_capacity(fsutil::CHUNK, file);
-        reporter.stage(Stage::Download, done, pkg.size);
+        reporter.stage(Stage::Download, done, asset.size);
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             if self.cancel.is_cancelled() {
@@ -251,26 +251,26 @@ impl Downloader {
                 }
             };
             done += chunk.len() as u64;
-            if done > pkg.size {
+            if done > asset.size {
                 drop(out);
                 let _ = fs::remove_file(part);
                 return Err(Error::SizeMismatch {
-                    id: pkg.id.clone(),
-                    expected: pkg.size,
+                    id: asset.label.clone(),
+                    expected: asset.size,
                     actual: done,
                 });
             }
             out.write_all(&chunk).await.map_err(io_ctx("saving the download"))?;
             hasher.update(&chunk);
-            reporter.bytes(Stage::Download, done, pkg.size);
+            reporter.bytes(Stage::Download, done, asset.size);
         }
         out.flush().await.map_err(io_ctx("saving the download"))?;
         out.get_ref().sync_all().await.map_err(io_ctx("saving the download"))?;
 
-        if done < pkg.size {
+        if done < asset.size {
             return Err(Error::Network(format!(
                 "The connection closed after {done} of {} bytes",
-                pkg.size
+                asset.size
             )));
         }
         Ok(hasher)

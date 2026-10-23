@@ -14,4 +14,13 @@ paths: Array<string>,
  * Folders owned by this package (an extraction folder); removed on
  * uninstall once empty.
  */
-dirs?: Array<string>, deps?: Array<string>, size: number, installedAt: string, };
+dirs?: Array<string>, 
+/**
+ * Which of `paths` is the package's data file, if it has one.
+ */
+data?: string, 
+/**
+ * For an unpacked package, the folder its zip went into ("" is the
+ * drive root). Older records leave it out; their first `dirs` entry is it.
+ */
+unpackedInto?: string, size: number, installedAt: string, };

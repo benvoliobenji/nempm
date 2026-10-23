@@ -23,4 +23,4 @@ pub mod uninstall;
 pub use error::{Error, Result};
 
 /// Recorded in each drive manifest's `writtenBy`.
-pub const WRITTEN_BY: &str = concat!("pkgmgr ", env!("CARGO_PKG_VERSION"));
+pub const WRITTEN_BY: &str = concat!("nempm ", env!("CARGO_PKG_VERSION"));

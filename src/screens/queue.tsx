@@ -23,9 +23,14 @@ const LABEL: Record<Stage, string> = {
   error: "Failed",
 };
 
-/** The stages one package goes through, in order. */
+/** The stages one package goes through, in order. Its data file is copied
+ * before a zip is unpacked, so an unpacked package has both stages, unless
+ * the zip carries the data file itself. */
 function stagesFor(step: PlanStep): Stage[] {
-  return ["download", "verify", step.extract ? "extract" : "copy", "readback"];
+  if (!step.extract) return ["download", "verify", "copy", "readback"];
+  return step.dataTarget && !step.dataInZip
+    ? ["download", "verify", "copy", "extract", "readback"]
+    : ["download", "verify", "extract", "readback"];
 }
 
 function StageStepper({ step, progress }: { step: PlanStep; progress?: StepProgress }) {
@@ -103,10 +108,19 @@ function JobCard({ job }: { job: Job }) {
     job.steps.length === 1 ? `${job.steps[0]!.name}` : `${job.steps.length} packages`;
 
   const cancel = () => api.cancelInstall().catch((err) => toast.error(errorMessage(err)));
-  const retry = () => {
+  const retry = (replaceUntracked = job.options.replaceUntracked) => {
     remove(job.key);
-    enqueue({ drive: job.drive, driveLabel: job.driveLabel, profile: job.profile, ids: job.ids, options: job.options, steps: job.steps });
+    enqueue({
+      drive: job.drive,
+      driveLabel: job.driveLabel,
+      profile: job.profile,
+      ids: job.ids,
+      options: { ...job.options, replaceUntracked },
+      steps: job.steps,
+    });
   };
+  // Files in the way of an unpacked zip only show up once it's downloaded.
+  const conflict = job.status === "failed" && job.error?.kind === "conflict" && !job.options.replaceUntracked;
 
   return (
     <section className="overflow-hidden rounded-xl border bg-card" aria-label={`Install ${title}`}>
@@ -121,10 +135,16 @@ function JobCard({ job }: { job: Job }) {
             <Square className="size-3" /> Cancel
           </Button>
         )}
-        {(job.status === "failed" || job.status === "cancelled") && (
-          <Button variant="outline" size="sm" onClick={retry}>
-            <RotateCcw /> Retry
+        {conflict ? (
+          <Button variant="outline" size="sm" onClick={() => retry(true)}>
+            <RotateCcw /> Replace files and retry
           </Button>
+        ) : (
+          (job.status === "failed" || job.status === "cancelled") && (
+            <Button variant="outline" size="sm" onClick={() => retry()}>
+              <RotateCcw /> Retry
+            </Button>
+          )
         )}
         {job.status !== "running" && (
           <Button variant="ghost" size="icon-sm" aria-label="Remove from list" onClick={() => remove(job.key)}>

@@ -3,7 +3,7 @@ import type { InstalledPackage } from "./InstalledPackage";
 import type { ProfileRef } from "./ProfileRef";
 
 /**
- * `.pkgmgr/manifest.json` on the drive: makes the drive self-describing on
+ * `.nempm/manifest.json` on the drive: makes the drive self-describing on
  * any computer.
  */
 export type DriveManifest = { schemaVersion: number, profile: ProfileRef, installed: Array<InstalledPackage>, writtenBy: string, updatedAt?: string, };

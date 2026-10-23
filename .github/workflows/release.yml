@@ -118,7 +118,7 @@ jobs:
             exit 0
           }
           cargo install trusted-signing-cli --locked
-          $conf = @{ bundle = @{ windows = @{ signCommand = "trusted-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:PROFILE -d `"Nemesis Package Manager`" %1" } } }
+          $conf = @{ bundle = @{ windows = @{ signCommand = "trusted-signing-cli -e $env:ENDPOINT -a $env:ACCOUNT -c $env:PROFILE -d `"nempm`" %1" } } }
           $conf | ConvertTo-Json -Depth 5 | Set-Content src-tauri/tauri.windows-signing.conf.json
           "EXTRA_TAURI_ARGS=--config src-tauri/tauri.windows-signing.conf.json" | Out-File -Append $env:GITHUB_ENV
           "AZURE_CLIENT_ID=$env:AZURE_CLIENT_ID" | Out-File -Append $env:GITHUB_ENV
@@ -134,13 +134,18 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: Nemesis Package Manager ${{ github.ref_name }}
+          releaseName: nempm ${{ github.ref_name }}
           releaseBody: See the commits since the previous release.
           # Draft until every platform has uploaded, then published at once,
           # so the (immutable) release never exists half-built.
           releaseDraft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           uploadUpdaterJson: true
+          # Plain file names (nempm_0.1.0_x64-setup.exe, nempm_0.1.0_aarch64.dmg,
+          # nempm_0.1.0_amd64.AppImage, ...) instead of the product name, whose
+          # spaces and parentheses GitHub would turn into dots. Signatures keep
+          # their .sig suffix, so latest.json still pairs them up.
+          releaseAssetNamePattern: "nempm_[version]_[arch][setup][ext]"
           # createUpdaterArtifacts lives in this overlay so local builds don't
           # need the signing key.
           args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json ${{ env.EXTRA_TAURI_ARGS }}

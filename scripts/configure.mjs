@@ -2,8 +2,9 @@
 // One-time setup helpers.
 //
 //   node scripts/configure.mjs owner <github-owner>
-//       Replaces the OWNER placeholder in the default index URL, the updater
-//       endpoints and the docs (and in ../registry, if it sits next to this repo).
+//       Points the default index URL (<owner>.github.io/nempm_reg), the updater
+//       endpoints (github.com/<owner>/nempm, <owner>.github.io/nempm) and the
+//       docs at another GitHub owner, for a fork.
 //
 //   node scripts/configure.mjs pubkey <path-to-key.pub>
 //       Puts the updater public key (from `pnpm tauri signer generate`) into
@@ -21,19 +22,29 @@ const OWNER_FILES = [
   "src-tauri/src/updates.rs",
   "src/lib/mock.ts",
   "README.md",
-  "../registry/.github/CODEOWNERS",
-  "../registry/schema/package.schema.json",
-  "../registry/schema/profile.schema.json",
-  "../registry/README.md",
 ];
 
+/** The owner the links point at now. */
+function currentOwner() {
+  const conf = JSON.parse(readFileSync(join(root, "src-tauri", "tauri.conf.json"), "utf8"));
+  return conf.plugins.updater.endpoints[0].match(/github\.com\/([^/]+)\//)?.[1];
+}
+
 if (command === "owner" && arg && /^[A-Za-z0-9-]+$/.test(arg)) {
+  const from = currentOwner();
+  if (!from) {
+    console.error("✗ Couldn't find the current owner in tauri.conf.json.");
+    process.exit(1);
+  }
   for (const rel of OWNER_FILES) {
     const file = join(root, rel);
     if (!existsSync(file)) continue;
     const text = readFileSync(file, "utf8");
-    if (!text.includes("OWNER")) continue;
-    writeFileSync(file, text.replaceAll("OWNER", arg));
+    const next = text
+      .replaceAll(`github.com/${from}/`, `github.com/${arg}/`)
+      .replaceAll(`${from}.github.io`, `${arg}.github.io`);
+    if (next === text) continue;
+    writeFileSync(file, next);
     console.log(`updated ${rel}`);
   }
   console.log(`✓ GitHub owner set to ${arg}.`);

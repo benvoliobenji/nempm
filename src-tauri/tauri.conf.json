@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Nemesis Package Manager",
-  "mainBinaryName": "pkgmgr",
+  "productName": "nempm (Nemesis Package Manager)",
+  "mainBinaryName": "nempm",
   "version": "0.1.0",
-  "identifier": "io.github.benvoliobenji.pkgmgr",
+  "identifier": "io.github.benvoliobenji.nempm",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -15,7 +15,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Nemesis Package Manager",
+        "title": "nempm",
         "width": 1200,
         "height": 780,
         "minWidth": 960,
@@ -35,7 +35,7 @@
     "active": true,
     "targets": ["nsis", "msi", "app", "dmg", "appimage", "deb"],
     "category": "Utility",
-    "shortDescription": "Install packages onto Nemesis USB drives",
+    "shortDescription": "nempm, the Nemesis Package Manager: puts packages onto Nemesis USB sticks",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "createUpdaterArtifacts": false,
     "windows": {
@@ -48,7 +48,7 @@
   "plugins": {
     "updater": {
       "pubkey": "",
-      "endpoints": ["https://github.com/OWNER/pkgmgr-app/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/benvoliobenji/nempm/releases/latest/download/latest.json"],
       "windows": { "installMode": "passive" }
     }
   }

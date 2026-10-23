@@ -32,7 +32,7 @@ export interface Backend {
   planInstall(path: string, profile: string, ids: string[], options: InstallOptions): Promise<InstallPlan>;
   install(path: string, profile: string, ids: string[], options: InstallOptions): Promise<InstallOutcome>;
   cancelInstall(): Promise<void>;
-  uninstall(path: string, id: string, force: boolean): Promise<DriveState>;
+  uninstall(path: string, id: string): Promise<DriveState>;
   eject(path: string): Promise<void>;
   isBusy(): Promise<boolean>;
   cacheInfo(): Promise<CacheInfo>;
@@ -68,7 +68,7 @@ async function tauriBackend(): Promise<Backend> {
     planInstall: (path, profile, ids, options) => invoke("plan_install", { path, profile, ids, options }),
     install: (path, profile, ids, options) => invoke("install", { path, profile, ids, options }),
     cancelInstall: () => invoke("cancel_install"),
-    uninstall: (path, id, force) => invoke("uninstall", { path, id, force }),
+    uninstall: (path, id) => invoke("uninstall", { path, id }),
     eject: (path) => invoke("eject", { path }),
     isBusy: () => invoke("is_busy"),
     cacheInfo: () => invoke("cache_info"),

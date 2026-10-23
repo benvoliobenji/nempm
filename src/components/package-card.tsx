@@ -71,7 +71,7 @@ export function PackageCard({
             </Badge>
           ) : (
             <Badge variant="success">
-              <Check /> Installed
+              <Check /> On this drive
             </Badge>
           )
         ) : (

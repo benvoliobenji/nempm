@@ -14,7 +14,9 @@ use crate::progress::CancelToken;
 pub const CHUNK: usize = 1 << 20;
 
 /// Suffix for files being written; Check drive offers to clean these up.
-pub const PART_SUFFIX: &str = ".pkgmgr-part";
+pub const PART_SUFFIX: &str = ".nempm-part";
+/// The suffix used before the app was called nempm.
+pub const LEGACY_PART_SUFFIX: &str = ".pkgmgr-part";
 
 pub fn part_path(dest: &Path) -> PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
@@ -339,7 +341,7 @@ mod tests {
         let src = dir.path().join("src");
         fs::write(&src, b"hello").unwrap();
         let dst = part_path(&dir.path().join("dst.zip"));
-        assert!(dst.to_string_lossy().ends_with("dst.zip.pkgmgr-part"));
+        assert!(dst.to_string_lossy().ends_with("dst.zip.nempm-part"));
         let (sha, n) = copy_hashed(&src, &dst, |_| {}, &CancelToken::new()).unwrap();
         assert_eq!(n, 5);
         assert_eq!(sha, hex::encode(Sha256::digest(b"hello")));

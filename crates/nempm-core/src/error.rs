@@ -67,6 +67,9 @@ pub enum Error {
     #[error("{path} already exists on the drive and wasn't installed by this app")]
     Conflict { path: String },
 
+    #[error("This drive already holds {current}, and it only takes one package at a time. Confirm replacing it.")]
+    Occupied { current: String },
+
     #[error("The archive contains an unsafe path: {entry}")]
     UnsafeArchive { entry: String },
 
@@ -112,6 +115,7 @@ pub enum ErrorKind {
     UnknownProfile,
     Dependency,
     Conflict,
+    Occupied,
     UnsafeArchive,
     InvalidData,
     NotInitialized,
@@ -146,6 +150,7 @@ impl Error {
             Error::UnknownProfile(_) => ErrorKind::UnknownProfile,
             Error::Dependency(_) => ErrorKind::Dependency,
             Error::Conflict { .. } => ErrorKind::Conflict,
+            Error::Occupied { .. } => ErrorKind::Occupied,
             Error::UnsafeArchive { .. } => ErrorKind::UnsafeArchive,
             Error::InvalidData(_) => ErrorKind::InvalidData,
             Error::NotInitialized => ErrorKind::NotInitialized,

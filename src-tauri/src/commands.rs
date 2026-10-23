@@ -7,13 +7,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pkgmgr_core::cache::{self, Downloader};
-use pkgmgr_core::check::{self, CheckReport, DriveState, FixAction};
-use pkgmgr_core::drives::{self, DriveInfo};
-use pkgmgr_core::index::{self, IndexResult};
-use pkgmgr_core::install::{self, InstallOptions, InstallOutcome, InstallPlan, InstallRequest};
-use pkgmgr_core::progress::{Progress, ProgressFn};
-use pkgmgr_core::{Error, Result, eject as eject_mod, manifest, uninstall as uninstall_mod};
+use nempm_core::cache::{self, Downloader};
+use nempm_core::check::{self, CheckReport, DriveState, FixAction};
+use nempm_core::drives::{self, DriveInfo};
+use nempm_core::index::{self, IndexResult};
+use nempm_core::install::{self, InstallOptions, InstallOutcome, InstallPlan, InstallRequest};
+use nempm_core::progress::{Progress, ProgressFn};
+use nempm_core::{Error, Result, eject as eject_mod, manifest, uninstall as uninstall_mod};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use ts_rs::TS;
@@ -87,11 +87,11 @@ pub fn set_settings(app: AppHandle, state: State<'_, AppState>, settings: Settin
     if settings.index_url.trim().is_empty() {
         return Err(Error::InvalidData("The index URL can't be empty".into()));
     }
-    pkgmgr_core::http::check_url(&settings.index_url)?;
+    nempm_core::http::check_url(&settings.index_url)?;
     let previous = state.settings();
     settings
         .save(&state.settings_path)
-        .map_err(pkgmgr_core::error::io_ctx("saving settings"))?;
+        .map_err(nempm_core::error::io_ctx("saving settings"))?;
     *state.settings.lock().unwrap() = settings.clone();
     if previous.theme != settings.theme {
         apply_theme(&app, settings.theme, *state.material.lock().unwrap());
@@ -249,12 +249,21 @@ pub fn cancel_install(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub async fn uninstall(state: State<'_, AppState>, path: String, id: String, force: bool) -> Result<DriveState> {
+pub async fn uninstall(state: State<'_, AppState>, path: String, id: String) -> Result<DriveState> {
     let _guard = state.claim()?;
     let index = state.index().ok();
     blocking(move || {
         let root = PathBuf::from(&path);
-        uninstall_mod::uninstall(&root, &id, force)?;
+        // Folders the drive's profile requires stay even when emptied.
+        let keep = match manifest::read(&root) {
+            manifest::ManifestState::Present(m) => index
+                .as_ref()
+                .and_then(|i| i.profile(&m.profile.id))
+                .map(|p| p.required_dirs.clone())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        uninstall_mod::uninstall(&root, &id, &keep)?;
         Ok(check::read_drive(&root, index.as_ref()))
     })
     .await

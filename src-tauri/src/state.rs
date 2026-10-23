@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use pkgmgr_core::http::HttpClient;
-use pkgmgr_core::index::IndexResult;
-use pkgmgr_core::model::{Index, Profile};
-use pkgmgr_core::progress::CancelToken;
-use pkgmgr_core::{Error, Result};
+use nempm_core::http::HttpClient;
+use nempm_core::index::IndexResult;
+use nempm_core::model::{Index, Profile};
+use nempm_core::progress::CancelToken;
+use nempm_core::{Error, Result};
 use tauri::{AppHandle, Manager};
 
 use crate::materials::Material;
@@ -18,7 +18,7 @@ use crate::updates::PendingUpdate;
 pub struct AppState {
     pub settings: Mutex<Settings>,
     pub settings_path: PathBuf,
-    /// `PKGMGR_INDEX_URL`, for the local development registry. Used instead of
+    /// `NEMPM_INDEX_URL`, for the local development registry. Used instead of
     /// the saved index URL but never written to settings.
     index_url_override: Option<String>,
     pub default_cache_dir: PathBuf,
@@ -39,9 +39,9 @@ impl AppState {
         Ok(Self {
             settings: Mutex::new(Settings::load(&settings_path)),
             settings_path,
-            index_url_override: std::env::var("PKGMGR_INDEX_URL").ok().filter(|u| !u.trim().is_empty()),
+            index_url_override: std::env::var("NEMPM_INDEX_URL").ok().filter(|u| !u.trim().is_empty()),
             default_cache_dir,
-            client: pkgmgr_core::http::client()?,
+            client: nempm_core::http::client()?,
             index: Mutex::new(None),
             busy: AtomicBool::new(false),
             cancel: CancelToken::new(),

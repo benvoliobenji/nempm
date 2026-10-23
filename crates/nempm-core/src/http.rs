@@ -11,7 +11,7 @@ use crate::{Error, Result};
 /// The client type, re-exported so the app needs no direct reqwest dependency.
 pub use reqwest::Client as HttpClient;
 
-pub const USER_AGENT: &str = concat!("pkgmgr/", env!("CARGO_PKG_VERSION"));
+pub const USER_AGENT: &str = concat!("nempm/", env!("CARGO_PKG_VERSION"));
 
 /// Builds the shared client. Safe to call more than once.
 pub fn client() -> Result<reqwest::Client> {
