@@ -33,13 +33,28 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "app", "dmg", "appimage", "deb"],
+    "targets": [
+      "nsis",
+      "msi",
+      "app",
+      "dmg",
+      "appimage",
+      "deb"
+    ],
     "category": "Utility",
     "shortDescription": "nempm, the Nemesis Package Manager: puts packages onto Nemesis USB sticks",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "createUpdaterArtifacts": false,
     "windows": {
-      "nsis": { "installMode": "currentUser" }
+      "nsis": {
+        "installMode": "currentUser"
+      }
     },
     "macOS": {
       "minimumSystemVersion": "11.0"
@@ -47,9 +62,13 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
-      "endpoints": ["https://github.com/benvoliobenji/nempm/releases/latest/download/latest.json"],
-      "windows": { "installMode": "passive" }
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlBNDk4QTNGMjVGNEY2NTkKUldSWjl2UWxQNHBKbW5iYlpjUFR2Y3NnWlBqK1JPc0FMTjlkRXk0UE5kajNqNHA1alhTcllZZHEK",
+      "endpoints": [
+        "https://github.com/benvoliobenji/nempm/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }
