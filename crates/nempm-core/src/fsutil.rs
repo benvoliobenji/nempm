@@ -1,7 +1,7 @@
 //! File operations that have to survive a USB stick being pulled: staged
 //! writes, real flushes, and read-back that bypasses the OS cache.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -115,6 +115,7 @@ pub fn free_space(path: &Path) -> io::Result<u64> {
 fn open_uncached(path: &Path) -> io::Result<(File, bool)> {
     #[cfg(windows)]
     {
+        use std::fs::OpenOptions;
         use std::os::windows::fs::OpenOptionsExt;
         use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_NO_BUFFERING;
         if let Ok(f) = OpenOptions::new()
