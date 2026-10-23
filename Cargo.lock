@@ -2244,7 +2244,7 @@ dependencies = [
 
 [[package]]
 name = "nempm"
-version = "0.2.0-beta.1"
+version = "0.2.0"
 dependencies = [
  "nempm-core",
  "serde",
@@ -2262,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "nempm-core"
-version = "0.2.0-beta.1"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "futures-util",
